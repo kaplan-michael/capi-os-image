@@ -14,13 +14,13 @@ ENV KUBE_VERSION=${KUBE_MAJOR_VERSION}.${KUBE_MINOR_VERSION}.${KUBE_PATCH_VERSIO
 LABEL org.capi.kube.version="${KUBE_VERSION}"
 
 RUN echo $KUBE_VERSION > /etc/kube_version
-RUN dnf install cloud-init qemu-guest-agent vim -y
+RUN dnf install cloud-init qemu-guest-agent vim htop bash-completion -y
 
-RUN echo 'u capi 1001 "default user" /home/capi /bin/bash' > /usr/lib/sysusers.d/capi.conf
-RUN echo 'g capi 1001' > /usr/lib/sysusers.d/capi.conf
-RUN echo 'm capi wheel' > /usr/lib/sysusers.d/capi.conf
-RUN echo 'm capi capi' > /usr/lib/sysusers.d/capi.conf
-RUN echo 'capi ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/capi
+COPY --chown=root:root os/01-capi-override.cfg /etc/cloud/cloud.cfg.d/1-capi-override.cfg
+COPY --chown=root:root os/02-hetzner-override.cfg /etc/cloud/cloud.cfg.d/2-hetzner-override.cfg
+
+#disable root login in ssh
+COPY --chown=root:root os/10-disable-root-login.conf /etc/ssh/sshd_config.d/10-disable-root-login.conf
 
 #Kube pre-reqs
 RUN dnf install -y \
@@ -30,8 +30,7 @@ RUN dnf install -y \
     kubernetes$KUBE_MAJOR_VERSION.$KUBE_MINOR_VERSION-kubeadm-$KUBE_VERSION \
     cri-o$KUBE_MAJOR_VERSION.$KUBE_MINOR_VERSION-$KUBE_VERSION \
     cri-tools$KUBE_MAJOR_VERSION.$KUBE_MINOR_VERSION \
-    crun \
-    firewalld
+    crun
 
 #kube setup
 RUN rm -rf /etc/cni/net.d/*
@@ -47,7 +46,8 @@ COPY --chown=root:root os/crio-plugindir.conf /etc/crio/crio.conf.d/91-plugindir
 RUN echo "containers:1000000:1048576" | tee -a /etc/subuid /etc/subgid
 COPY --chown=root:root os/crio-userns.conf /etc/crio/crio.conf.d/92-userns
 
-
+# Bake in tmpfiles for capi cloudinit
+COPY --chown=root:root os/capi-tmpfiles.conf /etc/tmpfiles.d/capi.conf
 
 # Configure kernel modules and sysctl settings for Kubernetes
 COPY --chown=root:root os/modules.conf /etc/modules-load.d/k8s.conf
@@ -56,17 +56,20 @@ COPY --chown=root:root os/sysctl.conf /etc/sysctl.d/k8s.conf
 # Enable and start CRI-O service
 RUN systemctl enable crio
 
+# Ensure kubelet is disabled(kubeadm will enable it later)
+RUN systemctl disable kubelet
+
+# Disable automatic updates
+RUN systemctl disable bootc-fetch-apply-updates.timer
+
 # Disable swap
 RUN dnf -y remove zram-generator-defaults
 
-# Configure firewall for both control plane and worker nodes
-RUN firewall-offline-cmd --set-default-zone=internal && \
-    firewall-offline-cmd --add-port=6443/tcp --add-port=2379-2380/tcp \
-    --add-port=10250/tcp --add-port=10259/tcp --add-port=10257/tcp \
-    --add-port=30000-32767/tcp
-
 # Configure DNS settings for Kubernetes
 RUN ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+
+#Cleanup kubernetes dir.
+RUN find /etc/kubernetes/ -maxdepth 1 -type f -delete
 
 # Cleanup
 RUN dnf clean all

@@ -10,7 +10,8 @@ To build the image, you need to have the following tools installed on your machi
 
 ###To build the image, run the following command:
 
-make sure your git is clean & that you have a tag, if not the image will have a dev- prefix
+make sure your git is clean & that you have a tag, if you don't have any tag the image version will have a dev- prefix,
+if you have a tag, but made changes, the image will have a version will have a -dirty suffix
 
 1. ```cp creds.mk.example creds.mk```
 

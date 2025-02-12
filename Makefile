@@ -94,10 +94,10 @@ build-raw:
         --rootfs xfs \
         $(IMAGE_NAME)
 	@echo "Rename the output file -> $(IMAGE)-$(IMAGE_TAG).raw"
-	sudo mv output/image/disk.raw output/image/$(IMAGE)-$(IMAGE_TAG).raw
+	@sudo mv output/image/disk.raw output/image/$(IMAGE)-$(IMAGE_TAG).raw
 
 build-qcow2:
-	@echo "Building RAW image for $(IMAGE_NAME)"
+	@echo "Building QCOW image for $(IMAGE_NAME)"
 	@echo "Ensure login to the registry"
 	@sudo podman login -u=$(REGISTRY_USER) -p=$(REGISTRY_PASSWORD) $(REGISTRY)
 	@echo "Ensure the image is available locally."
@@ -118,12 +118,13 @@ build-qcow2:
         --rootfs xfs \
         $(IMAGE_NAME)
 	@echo "Rename the output file -> $(IMAGE)-$(IMAGE_TAG).qcow2"
-	sudo mv output/qcow2/disk.raw output/qcow2/$(IMAGE)-$(IMAGE_TAG).qcow2
+	@sudo mv output/qcow2/disk.qcow output/qcow2/$(IMAGE)-$(IMAGE_TAG).qcow2
 
 HCLOUD_UPLOAD_IMAGE ?= $(LOCALBIN)/hcloud-upload-image
 
 .PHONY: hcloud-upload-image
-hcloud-upload-image: $(HCLOUD_UPLOAD_IMAGE) ## Download controller-gen locally if necessary. If wrong version is installed, it will be overwritten.
+hcloud-upload-image: $(HCLOUD_UPLOAD_IMAGE)
+## Download controller-gen locally if necessary. If wrong version is installed, it will be overwritten.
 $(HCLOUD_UPLOAD_IMAGE): $(LOCALBIN)
 	@echo "Installing hcloud-upload-image locally using Go..."
 	@test -s $(LOCALBIN)/hcloud-upload-image && $(LOCALBIN)/hcloud-upload-image --version | grep -q $(HCLOUD_UPLOAD_IMAGE_VERSION) || \
@@ -133,7 +134,10 @@ hcloud-upload: hcloud-upload-image
 	@echo "Uploading image $(IMAGE)-$(IMAGE_TAG).raw to Hetzner Cloud..."
 	@HCLOUD_TOKEN=$(HCLOUD_TOKEN) $(HCLOUD_UPLOAD_IMAGE) upload \
 	    --image-path=output/image/$(IMAGE)-$(IMAGE_TAG).raw \
-		--architecture=x86
+		--architecture=x86 \
+		--description $(IMAGE)-$(IMAGE_TAG) \
+		--labels version=$(IMAGE)-$(IMAGE_TAG) \
+		--labels caph-image-name=$(IMAGE)-$(IMAGE_TAG)
 
 	@echo "Ensure no dangling resources are left behind..."
 	@HCLOUD_TOKEN=$(HCLOUD_TOKEN) $(HCLOUD_UPLOAD_IMAGE) cleanup
