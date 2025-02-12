@@ -1,0 +1,72 @@
+FROM quay.io/centos-bootc/centos-bootc:c10s
+
+ARG KUBE_MAJOR_VERSION
+ARG KUBE_MINOR_VERSION
+ARG KUBE_PATCH_VERSION
+
+# Set environment variables from the build arguments
+ENV KUBE_MAJOR_VERSION=${KUBE_MAJOR_VERSION}
+ENV KUBE_MINOR_VERSION=${KUBE_MINOR_VERSION}
+ENV KUBE_PATCH_VERSION=${KUBE_PATCH_VERSION}
+
+ENV KUBE_VERSION=${KUBE_MAJOR_VERSION}.${KUBE_MINOR_VERSION}.${KUBE_PATCH_VERSION}
+
+LABEL org.capi.kube.version="${KUBE_VERSION}"
+
+RUN echo $KUBE_VERSION > /etc/kube_version
+RUN dnf install cloud-init qemu-guest-agent vim -y
+
+RUN echo 'u capi 1001 "default user" /home/capi /bin/bash' > /usr/lib/sysusers.d/capi.conf
+RUN echo 'g capi 1001' > /usr/lib/sysusers.d/capi.conf
+RUN echo 'm capi wheel' > /usr/lib/sysusers.d/capi.conf
+RUN echo 'm capi capi' > /usr/lib/sysusers.d/capi.conf
+RUN echo 'kraft ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/capi
+
+#Kube pre-reqs
+RUN dnf install -y \
+    kubernetes$KUBE_MAJOR_VERSION.$KUBE_MINOR_VERSION-$KUBE_VERSION \
+    kubernetes$KUBE_MAJOR_VERSION.$KUBE_MINOR_VERSION-systemd-$KUBE_VERSION \
+    kubernetes$KUBE_MAJOR_VERSION.$KUBE_MINOR_VERSION-client-$KUBE_VERSION \
+    kubernetes$KUBE_MAJOR_VERSION.$KUBE_MINOR_VERSION-kubeadm-$KUBE_VERSION \
+    cri-o$KUBE_MAJOR_VERSION.$KUBE_MINOR_VERSION-$KUBE_VERSION \
+    cri-tools$KUBE_MAJOR_VERSION.$KUBE_MINOR_VERSION \
+    crun \
+    firewalld
+
+#kube setup
+RUN rm -rf /etc/cni/net.d/*
+
+# Configure CRI-O runtime
+RUN sed -i 's/# cgroup_manager/cgroup_manager/g' /etc/crio/crio.conf
+RUN sed -i 's/# default_runtime = "runc"/default_runtime = "crun"/g' /etc/crio/crio.conf
+RUN mkdir /etc/crio/crio.conf.d
+COPY --chown=root:root os/crio-crun.conf /etc/crio/crio.conf.d/90-crun
+COPY --chown=root:root os/crio-plugindir.conf /etc/crio/crio.conf.d/91-plugindir
+
+# Configure user namespace support
+RUN echo "containers:1000000:1048576" | tee -a /etc/subuid /etc/subgid
+COPY --chown=root:root os/crio-userns.conf /etc/crio/crio.conf.d/92-userns
+
+
+
+# Configure kernel modules and sysctl settings for Kubernetes
+COPY --chown=root:root os/modules.conf /etc/modules-load.d/k8s.conf
+COPY --chown=root:root os/sysctl.conf /etc/sysctl.d/k8s.conf
+
+# Enable and start CRI-O service
+RUN systemctl enable crio
+
+# Disable swap
+RUN dnf -y remove zram-generator-defaults
+
+# Configure firewall for both control plane and worker nodes
+RUN firewall-offline-cmd --set-default-zone=internal && \
+    firewall-offline-cmd --add-port=6443/tcp --add-port=2379-2380/tcp \
+    --add-port=10250/tcp --add-port=10259/tcp --add-port=10257/tcp \
+    --add-port=30000-32767/tcp
+
+# Configure DNS settings for Kubernetes
+RUN ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+
+# Cleanup
+RUN dnf clean all
